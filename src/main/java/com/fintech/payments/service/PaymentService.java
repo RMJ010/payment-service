@@ -75,6 +75,9 @@ public class PaymentService {
 
         // 6. Double-entry accounting (atomic)
         try {
+            // Save PENDING transaction first so FK on account_ledger is satisfied
+            transactionRepository.save(transaction);
+
             accountService.debit(sourceAccount.getId(), amount, transaction.getId());
             accountService.credit(destinationAccount.getId(), amount, transaction.getId());
 

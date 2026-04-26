@@ -43,27 +43,25 @@ public class AccountService {
         return accountRepository.save(account);
     }
 
-    @Transactional
     public void debit(String accountId, BigDecimal amount, String transactionId) {
         int updated = accountRepository.debitBalance(accountId, amount);
         if (updated == 0) {
             throw new InvalidAccountException("Failed to debit account: " + accountId + ". Insufficient funds or account not found.");
         }
-
-        Account account = getAccount(accountId);
-        saveLedgerEntry(accountId, transactionId, amount.negate(), account.getBalance(), "DEBIT");
+        BigDecimal balanceAfter = accountRepository.findById(accountId)
+                .map(Account::getBalance).orElse(BigDecimal.ZERO);
+        saveLedgerEntry(accountId, transactionId, amount.negate(), balanceAfter, "DEBIT");
         log.info("Debited {} from account {}", amount, accountId);
     }
 
-    @Transactional
     public void credit(String accountId, BigDecimal amount, String transactionId) {
         int updated = accountRepository.creditBalance(accountId, amount);
         if (updated == 0) {
             throw new InvalidAccountException("Failed to credit account: " + accountId);
         }
-
-        Account account = getAccount(accountId);
-        saveLedgerEntry(accountId, transactionId, amount, account.getBalance(), "CREDIT");
+        BigDecimal balanceAfter = accountRepository.findById(accountId)
+                .map(Account::getBalance).orElse(BigDecimal.ZERO);
+        saveLedgerEntry(accountId, transactionId, amount, balanceAfter, "CREDIT");
         log.info("Credited {} to account {}", amount, accountId);
     }
 

@@ -1,9 +1,12 @@
-version: "3.9"
+
+# Mac-compatible: port 5000 moved to 5001 (macOS AirPlay uses 5000)
+# Usage:
+#   docker compose up --build
 
 services:
   # ─── PostgreSQL ───────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15
     container_name: payments-postgres
     environment:
       POSTGRES_DB: payments
@@ -22,7 +25,7 @@ services:
 
   # ─── Redis ────────────────────────────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:7
     container_name: payments-redis
     ports:
       - "6379:6379"
@@ -36,10 +39,11 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ─── Zookeeper (required by Kafka) ───────────────────────────────────────────
+  # ─── Zookeeper ───────────────────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: payments-zookeeper
+    platform: linux/amd64
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -51,6 +55,7 @@ services:
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: payments-kafka
+    platform: linux/amd64
     depends_on:
       - zookeeper
     ports:
@@ -66,32 +71,34 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
-      interval: 30s
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list 2>/dev/null || exit 1"]
+      interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   # ─── ML Fraud Detection Service ───────────────────────────────────────────────
+  # NOTE: Port mapped to 5001 on host — macOS Monterey+ reserves 5000 for AirPlay
   ml-fraud-service:
     build:
       context: ./ml-fraud-service
       dockerfile: Dockerfile
     container_name: payments-ml-service
     ports:
-      - "5000:5000"
+      - "5001:5000"          # host:container — container still runs on 5000 internally
     environment:
       PORT: 5000
       FLASK_DEBUG: "false"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\""]
-      interval: 30s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 15s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 90s
     restart: unless-stopped
 
-  # ─── Payment Service ──────────────────────────────────────────────────────────
+  # ─── Payment Service (Spring Boot) ───────────────────────────────────────────
   payment-service:
     build:
       context: .
@@ -116,18 +123,19 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # Uses internal Docker network name — NOT localhost:5001
       ML_SERVICE_URL: http://ml-fraud-service:5000/predict
       ML_SERVICE_ENABLED: "true"
       SECURITY_ENABLED: "false"
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/actuator/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 15s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 120s
     restart: unless-stopped
 
-  # ─── Kafka UI (optional monitoring) ──────────────────────────────────────────
+  # ─── Kafka UI (optional — docker compose --profile monitoring up) ─────────────
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: payments-kafka-ui
